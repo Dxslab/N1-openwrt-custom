@@ -2,6 +2,7 @@
 """Inspect the built archive without running target-architecture executables."""
 import sys
 import tarfile
+import re
 
 if len(sys.argv) != 2:
     raise SystemExit('Expected exactly one rootfs.tar.gz archive')
@@ -9,6 +10,11 @@ required = {
     'etc/config/network', 'etc/uci-defaults/99zz-n1-settings',
     'etc/sysctl.d/99-n1-ipv4.conf', 'etc/openclash/core/clash_meta',
     'etc/init.d/openclash', 'etc/init.d/ttyd', 'etc/init.d/firewall',
+    'etc/config/amlogic',
+    'usr/share/luci/menu.d/luci-app-amlogic.json',
+    'usr/share/rpcd/ucode/luci.amlogic',
+    'usr/share/amlogic/amlogic_check_firmware.sh',
+    'usr/share/amlogic/amlogic_check_kernel.sh',
 }
 with tarfile.open(sys.argv[1], 'r:gz') as archive:
     members = {member.name.removeprefix('./'): member for member in archive.getmembers()}
@@ -24,4 +30,19 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
     core = members['etc/openclash/core/clash_meta']
     if not core.mode & 0o111:
         raise SystemExit('Mihomo core is not executable')
+    amlogic = archive.extractfile(members['etc/config/amlogic']).read().decode()
+    for value in ('https://github.com/Dxslab/N1-openwrt-custom', 'N1-', 'kernel_flippy'):
+        if value not in amlogic:
+            raise SystemExit(f'Amlogic update configuration missing {value}')
+    # Verify actual installed packages as well as Kconfig selections.
+    status_name = next((name for name in ('usr/lib/opkg/status', 'lib/opkg/status') if name in members), None)
+    if not status_name:
+        raise SystemExit('Missing opkg installed-package status')
+    status = archive.extractfile(members[status_name]).read().decode()
+    installed = set(re.findall(r'^Package: (\S+)\s*$', status, re.MULTILINE))
+    allowed_apps = {'luci-app-openclash', 'luci-app-ttyd', 'luci-app-amlogic',
+                    'luci-app-firewall', 'luci-app-package-manager', 'luci-app-opkg'}
+    extra = sorted(name for name in installed if name.startswith('luci-app-') and name not in allowed_apps)
+    if extra:
+        raise SystemExit('Unexpected installed LuCI applications: ' + ', '.join(extra))
 print('Rootfs checks passed: network settings, proxy core, UI services and storage tools present.')

@@ -25,6 +25,12 @@ set firewall.@defaults[0].flow_offloading='0'
 set firewall.@defaults[0].flow_offloading_hw='0'
 set luci.main.lang='zh_cn'
 set openclash.config.enable='0'
+set amlogic.config.amlogic_firmware_repo='https://github.com/Dxslab/N1-openwrt-custom'
+set amlogic.config.amlogic_firmware_tag='N1-'
+set amlogic.config.amlogic_firmware_suffix='.img.gz'
+set amlogic.config.amlogic_kernel_path='https://github.com/ophub/kernel'
+set amlogic.config.amlogic_kernel_tags='kernel_flippy'
+set amlogic.config.amlogic_kernel_branch='6.12'
 commit
 EOF
 

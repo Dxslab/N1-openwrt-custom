@@ -2,6 +2,12 @@ name: Build N1 OpenWrt
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish successful firmware to Releases for Amlogic online updates
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -14,6 +20,7 @@ env:
   TZ: Asia/Hong_Kong
   IMMORTALWRT_COMMIT: af0775ab50d2d0e41f4e558c59208f6c9b8bdf0b
   OPENCLASH_COMMIT: e553e82e01c697aefbe1555261a503f425e00ccd
+  AMLOGIC_COMMIT: 869a7ae501d54d9b94742a1165df374b2a4d0e69
   PACKIT_COMMIT: a46b4f5d201ab99eba0ddc7c2e7cd67412fc3d5c
   FLIPPY_KERNEL: 6.12.114
   MIHOMO_VERSION: v1.19.33
@@ -54,6 +61,14 @@ jobs:
           repository: unifreq/openwrt_packit
           ref: ${{ env.PACKIT_COMMIT }}
           path: packit-source
+          persist-credentials: false
+
+      - name: Checkout Amlogic Service
+        uses: actions/checkout@v4
+        with:
+          repository: ophub/luci-app-amlogic
+          ref: ${{ env.AMLOGIC_COMMIT }}
+          path: amlogic-source
           persist-credentials: false
 
       - name: Install build dependencies
@@ -103,6 +118,7 @@ jobs:
             echo "Configuration repository: $GITHUB_REPOSITORY@$GITHUB_SHA"
             echo "ImmortalWrt: $IMMORTALWRT_COMMIT (openwrt-24.10)"
             echo "OpenClash: $OPENCLASH_COMMIT"
+            echo "Amlogic Service: $AMLOGIC_COMMIT"
             echo "openwrt_packit: $PACKIT_COMMIT"
             echo "Flippy kernel archive: ophub/kernel kernel_flippy $FLIPPY_KERNEL"
             echo "Mihomo: $MIHOMO_VERSION"
@@ -160,6 +176,15 @@ jobs:
             cd artifacts
             sha256sum ./*.img.gz > SHA256SUMS
           )
+          cat > artifacts/release-notes.md <<'EOF'
+          N1 firmware: ImmortalWrt 24.10 user space, Flippy 6.12 kernel,
+          OpenClash, Amlogic Service and web terminal.
+
+          LAN: http://192.168.1.2 ; gateway/DNS: 192.168.1.1.
+          DHCP server, IPv6 and Wi-Fi are disabled on N1.
+          Verify SHA256SUMS and test USB boot before writing eMMC.
+          This build does not configure failover on the primary router.
+          EOF
           {
             echo '## N1 firmware built'
             echo '- Download the **N1-firmware** artifact below.'
@@ -190,3 +215,30 @@ jobs:
             artifacts/build-info.txt
           if-no-files-found: ignore
           retention-days: 7
+
+  release:
+    if: ${{ inputs.publish_release }}
+    needs: firmware
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: N1-firmware-${{ github.run_number }}
+          path: firmware
+
+      - name: Publish firmware for Amlogic online updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          cd firmware
+          sha256sum -c SHA256SUMS
+          gh release create "N1-${GITHUB_RUN_NUMBER}" \
+            --target "$GITHUB_SHA" \
+            --title "N1 firmware build ${GITHUB_RUN_NUMBER}" \
+            --notes-file release-notes.md \
+            ./*.img.gz SHA256SUMS build-info.txt image-check.txt FIRST-BOOT.md
