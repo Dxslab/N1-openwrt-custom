@@ -1,0 +1,49 @@
+#!/bin/sh
+# No passwords, subscriptions or node credentials are embedded in this image.
+uci -q batch <<'EOF'
+set system.@system[0].hostname='N1'
+set system.@system[0].zonename='Asia/Hong_Kong'
+set system.@system[0].timezone='HKT-8'
+set system.ntp='timeserver'
+set system.ntp.enabled='1'
+set system.ntp.enable_server='0'
+delete system.ntp.server
+add_list system.ntp.server='ntp.aliyun.com'
+add_list system.ntp.server='time.cloudflare.com'
+set dhcp.lan='dhcp'
+set dhcp.lan.interface='lan'
+set dhcp.lan.ignore='1'
+set dhcp.lan.dhcpv6='disabled'
+set dhcp.lan.ra='disabled'
+set dhcp.lan.ndp='disabled'
+set dhcp.@dnsmasq[0].noresolv='1'
+delete dhcp.@dnsmasq[0].server
+add_list dhcp.@dnsmasq[0].server='192.168.1.1'
+set dhcp.@dnsmasq[0].port='53'
+set firewall.@defaults[0].forward='ACCEPT'
+set firewall.@defaults[0].flow_offloading='0'
+set firewall.@defaults[0].flow_offloading_hw='0'
+set luci.main.lang='zh_cn'
+set openclash.config.enable='0'
+commit
+EOF
+
+# Leave the proxy stopped until the owner imports their configuration.
+if [ -x /etc/init.d/openclash ]; then
+    /etc/init.d/openclash disable
+fi
+if [ -x /etc/init.d/odhcpd ]; then
+    /etc/init.d/odhcpd disable
+fi
+if [ -x /etc/init.d/ttyd ]; then
+    /etc/init.d/ttyd enable
+fi
+
+# A wired-only build; the packager may supply dormant Wi-Fi configuration.
+if [ -f /etc/config/wireless ]; then
+    for section in $(uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+        uci set "wireless.$section.disabled=1"
+    done
+    uci commit wireless
+fi
+exit 0

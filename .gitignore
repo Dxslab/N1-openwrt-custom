@@ -1,0 +1,7 @@
+/openwrt/
+/openclash-source/
+/packit-source/
+/artifacts/
+*.log
+__pycache__/
+*.pyc

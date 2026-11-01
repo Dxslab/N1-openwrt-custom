@@ -1,0 +1,7 @@
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.config text eol=lf
+*.conf text eol=lf
+files/etc/uci-defaults/* text eol=lf
