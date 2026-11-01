@@ -1,14 +1,14 @@
 # 首次启动
 
 这是基于 ImmortalWrt 24.10 用户空间、Flippy 6.12 内核和 openwrt_packit 的 N1 镜像。
-最终镜像使用 Btrfs 根分区。不要把编译目录里的 ARM EFI 镜像刷入 N1。
+最终镜像使用 Btrfs 根分区。不要把ImageBuilder 目录里的通用 ARM EFI 镜像刷入 N1。
 
 1. 下载 `N1-firmware-数字` 构建产物，解开 ZIP，核对其中 `SHA256SUMS`。
 2. 将其中的 `openwrt_s905d_n1_*.img.gz` 用 Rufus/Etcher 写入 U 盘；会清空所选 U 盘。
 3. N1 关机断电，插入启动盘再通电。先保持现有 eMMC 系统不变。
 4. N1 网线接主路由 LAN 口。默认后台 `http://192.168.1.2`，主路由应为 `192.168.1.1/24`。
 5. 首次以 `root` 登录后立即设置自己的密码。构建配置没有预设密码或代理订阅。
-6. 在 OpenClash 中导入自己的配置。插件预装了 ARM64 Mihomo 内核，但不会自动开启代理。
+6. 后台默认为 Vantage 中文主题，并带 Vantage 中文仪表盘。在 OpenClash 中导入自己的配置。插件预装了 ARM64 Mihomo 内核，但不会自动开启代理。
 7. 在网页终端或 SSH 执行 `uname -r`、`ip -4 addr`、`df -h`，确认是新固件及 U 盘根分区。
 8. 测试 DNS、普通上网及代理都正常后，再检查并执行镜像自带的 eMMC 安装工具。
 

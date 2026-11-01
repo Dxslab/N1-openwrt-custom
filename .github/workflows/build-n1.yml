@@ -18,9 +18,6 @@ concurrency:
 
 env:
   TZ: Asia/Hong_Kong
-  IMMORTALWRT_COMMIT: af0775ab50d2d0e41f4e558c59208f6c9b8bdf0b
-  OPENCLASH_COMMIT: e553e82e01c697aefbe1555261a503f425e00ccd
-  AMLOGIC_COMMIT: 869a7ae501d54d9b94742a1165df374b2a4d0e69
   PACKIT_COMMIT: a46b4f5d201ab99eba0ddc7c2e7cd67412fc3d5c
   FLIPPY_KERNEL: 6.12.114
   MIHOMO_VERSION: v1.19.33
@@ -29,7 +26,7 @@ env:
 jobs:
   firmware:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash
@@ -39,36 +36,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout ImmortalWrt 24.10
-        uses: actions/checkout@v4
-        with:
-          repository: immortalwrt/immortalwrt
-          ref: ${{ env.IMMORTALWRT_COMMIT }}
-          path: openwrt
-          persist-credentials: false
-
-      - name: Checkout OpenClash
-        uses: actions/checkout@v4
-        with:
-          repository: vernesong/OpenClash
-          ref: ${{ env.OPENCLASH_COMMIT }}
-          path: openclash-source
-          persist-credentials: false
-
       - name: Checkout Flippy packager
         uses: actions/checkout@v4
         with:
           repository: unifreq/openwrt_packit
           ref: ${{ env.PACKIT_COMMIT }}
           path: packit-source
-          persist-credentials: false
-
-      - name: Checkout Amlogic Service
-        uses: actions/checkout@v4
-        with:
-          repository: ophub/luci-app-amlogic
-          ref: ${{ env.AMLOGIC_COMMIT }}
-          path: amlogic-source
           persist-credentials: false
 
       - name: Install build dependencies
@@ -82,56 +55,68 @@ jobs:
             xz-utils zstd qemu-utils p7zip-full patch diffutils cpio
           df -h . /opt
 
-      - name: Configure minimal rootfs
-        run: bash scripts/prepare-build.sh
+      - name: Restore Zstd-enabled Btrfs package
+        id: btrfs-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            local-packages/
+            artifacts/btrfs-sdk*
+          key: btrfs-zstd-${{ runner.os }}-${{ hashFiles('configs/prebuilt-lock.json', 'scripts/build-btrfs.sh') }}
+
+      - name: Download verified prebuilt packages and SDK
+        env:
+          BTRFS_CACHE_HIT: ${{ steps.btrfs-cache.outputs.cache-hit }}
+        run: |
+          args=()
+          if [ "$BTRFS_CACHE_HIT" = true ]; then args+=(--skip-sdk); fi
+          python3 scripts/fetch-prebuilt.py "${args[@]}"
+
+      - name: Build Zstd-enabled Btrfs maintenance package only
+        if: steps.btrfs-cache.outputs.cache-hit != 'true'
+        run: |
+          set -o pipefail
+          bash scripts/build-btrfs.sh 2>&1 | tee btrfs-sdk.log
+
+      - name: Prepare official ImageBuilder
+        run: bash scripts/prepare-imagebuilder.sh
 
       - name: Download verified ARM64 proxy core
         run: |
           python3 scripts/prepare-core.py \
             "$MIHOMO_VERSION" "$MIHOMO_SHA256" \
-            openwrt/files/etc/openclash/core/clash_meta
+            imagebuilder/files/etc/openclash/core/clash_meta
 
-      - name: Download source archives
-        working-directory: openwrt
+      - name: Assemble rootfs from prebuilt packages
         run: |
           set -o pipefail
-          make download -j4 V=s 2>&1 | tee ../build-download.log
-
-      - name: Compile rootfs
-        working-directory: openwrt
-        run: |
-          set -o pipefail
-          if ! make -j2 V=s 2>&1 | tee ../build.log; then
-            echo 'Retry once with one compiler process for diagnostic output.'
-            make -j1 V=s 2>&1 | tee -a ../build.log
-          fi
+          packages=$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' configs/packages.txt | tr '\n' ' ')
+          make -C imagebuilder image PROFILE=generic \
+            PACKAGES="$packages" FILES="$GITHUB_WORKSPACE/imagebuilder/files" \
+            ROOTFS_PARTSIZE=1280 2>&1 | tee imagebuilder.log
 
       - name: Verify rootfs and collect build records
         run: |
           mkdir -p artifacts
-          python3 scripts/check-rootfs.py \
-            openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
-          cp openwrt/.config artifacts/immortalwrt-full.config
-          cp openwrt/feeds.conf.default artifacts/feeds.conf
-          cp openwrt/bin/targets/armsr/armv8/*.manifest artifacts/
+          python3 scripts/check-rootfs.py imagebuilder/bin/targets/armsr/armv8/*rootfs.tar.gz
+          cp configs/prebuilt-lock.json configs/packages.txt artifacts/
+          cp imagebuilder/repositories.conf artifacts/imagebuilder-repositories.conf
+          cp imagebuilder/bin/targets/armsr/armv8/*.manifest artifacts/
+          sha256sum local-packages/*.ipk > artifacts/custom-package-sha256.txt
           {
             echo "Configuration repository: $GITHUB_REPOSITORY@$GITHUB_SHA"
-            echo "ImmortalWrt: $IMMORTALWRT_COMMIT (openwrt-24.10)"
-            echo "OpenClash: $OPENCLASH_COMMIT"
-            echo "Amlogic Service: $AMLOGIC_COMMIT"
+            echo "ImmortalWrt: official 24.10.6 ImageBuilder; armsr/armv8"
+            echo "Only btrfs-progs and its build dependencies use the official prebuilt SDK."
+            echo "Application/theme versions and hashes: prebuilt-lock.json"
             echo "openwrt_packit: $PACKIT_COMMIT"
             echo "Flippy kernel archive: ophub/kernel kernel_flippy $FLIPPY_KERNEL"
             echo "Mihomo: $MIHOMO_VERSION"
             date -Iseconds
-            for feed in packages luci routing; do
-              printf '%s: ' "$feed"
-              git -C "openwrt/feeds/$feed" rev-parse HEAD
-            done
           } > artifacts/build-info.txt
 
       - name: Package N1 image with Flippy kernel
         env:
-          OPENWRT_ARMSR: ${{ github.workspace }}/openwrt/bin/targets/armsr/armv8/*rootfs.tar.gz
+          OPENWRT_ARMSR: ${{ github.workspace }}/imagebuilder/bin/targets/armsr/armv8/*rootfs.tar.gz
           PACKAGE_SOC: s905d
           KERNEL_REPO_URL: ophub/kernel
           KERNEL_VERSION_NAME: ${{ env.FLIPPY_KERNEL }}
@@ -178,7 +163,7 @@ jobs:
           )
           cat > artifacts/release-notes.md <<'EOF'
           N1 firmware: ImmortalWrt 24.10 user space, Flippy 6.12 kernel,
-          OpenClash, Amlogic Service and web terminal.
+          OpenClash, Amlogic Service, web terminal and Vantage dashboard/theme (Chinese).
 
           LAN: http://192.168.1.2 ; gateway/DNS: 192.168.1.1.
           DHCP server, IPv6 and Wi-Fi are disabled on N1.
@@ -210,8 +195,9 @@ jobs:
           name: N1-build-logs-${{ github.run_number }}
           path: |
             *.log
-            openwrt/.config
-            openwrt/logs/
+            sdk/.config
+            sdk/logs/
+            imagebuilder/.config
             artifacts/build-info.txt
           if-no-files-found: ignore
           retention-days: 7

@@ -3,6 +3,10 @@
 /packit-source/
 /amlogic-source/
 /artifacts/
+/downloads/
+/imagebuilder/
+/sdk/
+/local-packages/
 *.log
 __pycache__/
 *.pyc

@@ -3,6 +3,7 @@
 import sys
 import tarfile
 import re
+from pathlib import Path
 
 if len(sys.argv) != 2:
     raise SystemExit('Expected exactly one rootfs.tar.gz archive')
@@ -15,6 +16,10 @@ required = {
     'usr/share/rpcd/ucode/luci.amlogic',
     'usr/share/amlogic/amlogic_check_firmware.sh',
     'usr/share/amlogic/amlogic_check_kernel.sh',
+    'usr/share/luci/menu.d/luci-app-vantage.json',
+    'usr/share/rpcd/ucode/luci.vantage',
+    'usr/lib/lua/luci/i18n/vantage.zh-cn.lmo',
+    'usr/lib/lua/luci/i18n/vantage-theme.zh-cn.lmo',
 }
 with tarfile.open(sys.argv[1], 'r:gz') as archive:
     members = {member.name.removeprefix('./'): member for member in archive.getmembers()}
@@ -27,6 +32,14 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
     network = archive.extractfile(members['etc/config/network']).read().decode()
     if "option ipaddr '192.168.1.2'" not in network:
         raise SystemExit('Wrong LAN address')
+    defaults = archive.extractfile(members['etc/uci-defaults/99zz-n1-settings']).read().decode()
+    if "set luci.main.mediaurlbase='/luci-static/vantage'" not in defaults:
+        raise SystemExit('Vantage is not configured as the default theme')
+    if not any(name.startswith('www/luci-static/vantage/') for name in members):
+        raise SystemExit('Missing Vantage theme assets')
+    btrfs = next(members[f'{directory}/btrfs'] for directory in ('usr/bin', 'sbin', 'usr/sbin', 'bin') if f'{directory}/btrfs' in members)
+    if b'libzstd.so' not in archive.extractfile(btrfs).read():
+        raise SystemExit('Btrfs binary lacks the required Zstd library dependency')
     core = members['etc/openclash/core/clash_meta']
     if not core.mode & 0o111:
         raise SystemExit('Mihomo core is not executable')
@@ -40,9 +53,14 @@ with tarfile.open(sys.argv[1], 'r:gz') as archive:
         raise SystemExit('Missing opkg installed-package status')
     status = archive.extractfile(members[status_name]).read().decode()
     installed = set(re.findall(r'^Package: (\S+)\s*$', status, re.MULTILINE))
+    requested = {line.strip() for line in (Path(__file__).resolve().parents[1] / 'configs/packages.txt').read_text().splitlines()
+                 if line.strip() and not line.lstrip().startswith(('#', '-'))}
+    missing_packages = requested - installed
+    if missing_packages:
+        raise SystemExit('Rootfs missing requested packages: ' + ', '.join(sorted(missing_packages)))
     allowed_apps = {'luci-app-openclash', 'luci-app-ttyd', 'luci-app-amlogic',
-                    'luci-app-firewall', 'luci-app-package-manager', 'luci-app-opkg'}
+                    'luci-app-firewall', 'luci-app-package-manager', 'luci-app-opkg', 'luci-app-vantage'}
     extra = sorted(name for name in installed if name.startswith('luci-app-') and name not in allowed_apps)
     if extra:
         raise SystemExit('Unexpected installed LuCI applications: ' + ', '.join(extra))
-print('Rootfs checks passed: network settings, proxy core, UI services and storage tools present.')
+print('Rootfs checks passed: all requested packages, Vantage/dashboard Chinese translations, default theme, proxy core and Btrfs Zstd present.')
